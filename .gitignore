@@ -12,4 +12,4 @@ venv/
 *.db
 /data/
 claude-code-prompts.md
-CLAUDE.md
+CLAUDE.mdclaude-code-prompts.md
