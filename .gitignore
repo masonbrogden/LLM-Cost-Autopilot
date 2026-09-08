@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.env
+.venv/
+venv/
+.env.local
+.DS_Store
+*.sqlite3
+*.db
+/data/
+claude-code-prompts.md
