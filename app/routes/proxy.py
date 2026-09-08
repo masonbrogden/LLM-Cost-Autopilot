@@ -4,13 +4,16 @@ import os
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
+from app.classifier import score
+from app.evaluator import schedule_evaluation
 from app.logging_db import log_request
 from app.providers.base import StandardResponse
 from app.providers.ollama import OllamaProvider
 from app.providers.paid import AnthropicProvider
 from app.registry import MODEL_REGISTRY, get_baseline_model, get_cheapest_in_tier
+from app.router import select
 from app.schemas import ChatCompletionRequest, ChatCompletionResponse, ChatMessage, Choice, Usage
 
 router = APIRouter()
@@ -26,9 +29,13 @@ def _provider_for_model(model_id: str):
 
 
 @router.post("/v1/chat/completions")
-async def chat_completions(request: ChatCompletionRequest):
-    model_id = request.model or "claude-haiku-4-5-20251001"
-    model = next((m for m in MODEL_REGISTRY if m.model_id == model_id), get_cheapest_in_tier("low"))
+async def chat_completions(request: ChatCompletionRequest, background_tasks: BackgroundTasks):
+    message_payload = [{"role": msg.role, "content": msg.content} for msg in request.messages]
+    scored = score(message_payload)
+    selected_model = select(scored)
+
+    model_id = request.model or selected_model.model_id
+    model = next((m for m in MODEL_REGISTRY if m.model_id == model_id), selected_model)
     if model is None:
         raise HTTPException(status_code=400, detail="Unsupported model")
 
@@ -39,7 +46,7 @@ async def chat_completions(request: ChatCompletionRequest):
 
     try:
         response: StandardResponse = await provider.complete(
-            [{"role": msg.role, "content": msg.content} for msg in request.messages],
+            message_payload,
             model,
             max_tokens=request.max_tokens or 256,
         )
@@ -68,7 +75,7 @@ async def chat_completions(request: ChatCompletionRequest):
             savings_usd=savings,
             error=None,
         )
-        return ChatCompletionResponse(
+        response_payload = ChatCompletionResponse(
             id=request_id,
             model=model.model_id,
             choices=[
@@ -84,6 +91,15 @@ async def chat_completions(request: ChatCompletionRequest):
                 total_tokens=response.prompt_tokens + response.completion_tokens,
             ),
         )
+        schedule_evaluation(
+            request_id=request_id,
+            prompt_text=prompt_text,
+            cheap_answer=response.text,
+            judge_model="claude-opus-5",
+            db_path=db_path,
+            background_tasks=background_tasks,
+        )
+        return response_payload
     except Exception as exc:
         log_request(
             db_path=db_path,
