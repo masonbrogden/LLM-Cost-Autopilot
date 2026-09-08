@@ -11,4 +11,4 @@ venv/
 *.sqlite3
 *.db
 /data/
-claude-code-prompts.md
+claude-code-prompts.mdclaude-code-prompts.md
